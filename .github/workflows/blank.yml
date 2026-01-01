@@ -1,0 +1,98 @@
+name: Build WPS Office 365 Edu (ID/EN)
+
+on:
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
+
+jobs:
+  build-wps:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget dpkg-dev
+
+    - name: Download WPS Office 365 Edu Source
+      run: |
+        # URL for WPS Office 365 Education Edition (Update version number if needed)
+        # Sourced from official WPS CDN
+        WPS_URL="https://pubwps-wps365-obs.wpscdn.cn/download/Linux/365edu/12.1.2.23578/wps-office_12.1.2.23578.AK.preload.sw.withsn_amd64.deb"
+        
+        echo "Downloading WPS Office from $WPS_URL..."
+        wget -q -O wps-original.deb "$WPS_URL"
+        echo "Download complete."
+
+    - name: Extract Deb Package
+      run: |
+        mkdir -p build/DEBIAN
+        # Extract the filesystem and control info
+        dpkg-deb -R wps-original.deb build/
+
+    - name: Configure Language to English
+      run: |
+        echo "Patching language configuration..."
+        
+        # 1. Modify the default MUI config to prioritize English over Chinese
+        # The path usually resides in /opt/kingsoft/wps-office/office6/mui/
+        # We find the 'default' file or create a config to force en_US
+        
+        MUI_PATH="build/opt/kingsoft/wps-office/office6/mui"
+        
+        # Ensure en_US exists (it usually does in the package, but hidden)
+        if [ -d "$MUI_PATH/en_US" ]; then
+            echo "English language pack found."
+        else
+            echo "Warning: English pack not explicitly found, assuming standard structure."
+        fi
+
+        # Force default language in the mui/languages file if it exists
+        if [ -f "$MUI_PATH/languages" ]; then
+            sed -i 's/zh_CN/en_US/g' "$MUI_PATH/languages"
+        fi
+
+        # 2. Inject a startup script wrapper to force locale variables
+        # This ensures it runs in English even on Indonesian region systems
+        
+        BIN_PATH="build/usr/bin"
+        mkdir -p "$BIN_PATH"
+        
+        # Rename original binary links slightly or just overwrite the wrapper logic?
+        # A safer way: Create a profile.d script to set variables globally for WPS
+        
+        mkdir -p build/etc/profile.d/
+        echo 'export MALLOC_CHECK_=0' > build/etc/profile.d/wps-365.sh
+        # Force English UI
+        echo 'export LANGUAGE=en_US:en' >> build/etc/profile.d/wps-365.sh
+        echo 'export LANG=en_US.UTF-8' >> build/etc/profile.d/wps-365.sh
+        chmod +x build/etc/profile.d/wps-365.sh
+
+    - name: Update Package Metadata
+      run: |
+        # Update control file to reflect modifications
+        CONTROL_FILE="build/DEBIAN/control"
+        
+        # Change package name to avoid conflict with standard wps-office
+        sed -i 's/Package: wps-office/Package: wps-office-365-edu-id/g' "$CONTROL_FILE"
+        
+        # Update Maintainer
+        sed -i 's/Maintainer: .*/Maintainer: Custom Build <github-actions@local>/g' "$CONTROL_FILE"
+        
+        # Add description
+        echo "Description: WPS Office 365 Education (Repack for Indonesia/English)" >> "$CONTROL_FILE"
+
+    - name: Build New Deb Package
+      run: |
+        # Build the new .deb file
+        dpkg-deb -b build wps-office-365-edu-id_amd64.deb
+        ls -lh *.deb
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: wps-office-365-edu-id
+        path: wps-office-365-edu-id_amd64.deb
+        retention-days: 5
